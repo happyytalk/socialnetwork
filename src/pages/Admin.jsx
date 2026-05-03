@@ -142,11 +142,22 @@ const Admin = () => {
         setReportedRooms(reportedRooms.filter(r => r.id !== reportId));
     };
 
-    const handleDeleteReportedRoom = (reportId) => {
+    const handleDeleteReportedRoom = async (reportId) => {
         const report = reportedRooms.find(r => r.id === reportId);
-        if (report && window.confirm(`Delete room "${report.title}"?`)) {
-            setRooms(rooms.filter(r => r.id !== reportId));
-            setReportedRooms(reportedRooms.filter(r => r.id !== reportId));
+        if (report && window.confirm(`Delete room "${report.title}" and dismiss report?`)) {
+            try {
+                // Try to delete by ID if report.room_id exists, otherwise try report.id
+                const roomId = report.room_id || report.id;
+                const { error } = await supabase.from('rooms').delete().eq('id', roomId);
+                if (!error) {
+                    setRooms(rooms.filter(r => r.id !== roomId));
+                    setReportedRooms(reportedRooms.filter(r => r.id !== reportId));
+                } else {
+                    alert('Error: ' + error.message);
+                }
+            } catch (err) {
+                alert('Database connection failed.');
+            }
         }
     };
 
@@ -342,8 +353,8 @@ const Admin = () => {
                                                     </td>
                                                     <td className="py-4 px-6 text-gray-600 font-semibold text-sm">{room.profile?.username || room.creator}</td>
                                                     <td className="py-4 px-6 text-right space-x-2">
-                                                        <button onClick={() => handleEditRoom(room)} className="p-2.5 bg-[#111111] hover:bg-white/10 text-gray-600 hover:text-white rounded-xl transition-all inline-block"><Edit2 size={16} /></button>
-                                                        <button onClick={() => handleDeleteRoom(room.id)} className="p-2.5 bg-[#111111] hover:bg-black/10 text-gray-600 hover:text-black rounded-xl transition-all inline-block"><Trash2 size={16} /></button>
+                                                        <button onClick={() => handleEditRoom(room)} className="p-2.5 bg-[#111111] hover:bg-white/10 text-gray-500 hover:text-white rounded-xl transition-all inline-block" title="Edit Room"><Edit2 size={16} /></button>
+                                                        <button onClick={() => handleDeleteRoom(room.id)} className="p-2.5 bg-[#111111] hover:bg-red-500/20 text-gray-500 hover:text-red-500 rounded-xl transition-all inline-block" title="Delete Room"><Trash2 size={16} /></button>
                                                     </td>
                                                 </tr>
                                             ))}
@@ -465,7 +476,7 @@ const Admin = () => {
                                                     </div>
                                                 </div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => handleDeleteReportedRoom(report.id)} className="px-3 py-1.5 bg-white/10 hover:bg-white text-white hover:text-white font-bold rounded-lg text-xs transition-colors">Delete Room</button>
+                                                    <button onClick={() => handleDeleteReportedRoom(report.id)} className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white font-bold rounded-lg text-xs transition-colors">Delete Room</button>
                                                     <button onClick={() => handleDismissReport(report.id)} className="px-3 py-1.5 bg-[#222222] hover:bg-gray-300 text-gray-600 font-bold rounded-lg text-xs transition-colors">Dismiss</button>
                                                 </div>
                                             </div>
