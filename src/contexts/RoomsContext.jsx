@@ -40,10 +40,18 @@ export const RoomsProvider = ({ children }) => {
 
         const localCreated = getLocalRooms();
         const guestRooms = getGuestRooms();
+        const overrides = JSON.parse(localStorage.getItem('room_participant_overrides') || '{}');
 
         const BLACKLISTED_TITLES = ['Zero to Hero Beginners', 'Grammar Practice', 'Vocabulary Voyagers', '📚 Grammar Practice'];
 
-        const allRooms = [...dbRooms, ...localCreated, ...guestRooms, ...mockRooms];
+        const allRooms = [...dbRooms, ...localCreated, ...guestRooms, ...mockRooms].map(r => {
+            if (overrides[r.id]) {
+                return { ...r, people: [...(r.people || []), ...overrides[r.id]].filter((p, i, self) => 
+                    self.findIndex(t => String(t.id) === String(p.id)) === i
+                )};
+            }
+            return r;
+        });
         const seen = new Set();
         const unique = allRooms.filter(r => {
             const key = r.id || r.jitsi_room_name;
@@ -226,28 +234,60 @@ export const RoomsProvider = ({ children }) => {
 
     // ADD PARTICIPANT (on Join)
     const addParticipant = useCallback(async (roomId, user) => {
-        const updateFn = (prev) => prev.map(r => {
+        console.log(`Adding participant ${user.username} to room ${roomId}`);
+        
+        // 1. Update local state immediately for instant UI feedback
+        setRooms(prev => prev.map(r => {
             if (r.id !== roomId) return r;
-            const people = r.people || [];
+            const people = Array.isArray(r.people) ? r.people : [];
             if (people.some(p => String(p.id) === String(user.id))) return r;
-            const updated = { ...r, people: [user, ...people], last_active: new Date().toISOString() };
-            return updated;
-        });
+            return { ...r, people: [user, ...people], last_active: new Date().toISOString() };
+        }));
 
-        setRooms(updateFn);
-
-        try {
-            const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
-            if (room) {
-                const people = room.people || [];
-                if (!people.some(p => String(p.id) === String(user.id))) {
-                    const { data } = await supabase.from('rooms')
-                        .update({ people: [user, ...people], last_active: new Date().toISOString() })
-                        .eq('id', roomId).select().single();
-                    channelRef.current?.send({ type: 'broadcast', event: 'room_updated', payload: { room: data } });
+        // 2. Broadcast the change to other tabs/browsers immediately
+        if (channelRef.current) {
+            // Find the updated room to broadcast
+            setRooms(currentRooms => {
+                const updatedRoom = currentRooms.find(r => r.id === roomId);
+                if (updatedRoom) {
+                    channelRef.current.send({
+                        type: 'broadcast',
+                        event: 'room_updated',
+                        payload: { room: updatedRoom }
+                    });
                 }
+                return currentRooms;
+            });
+        }
+
+        // 3. Persist to DB if it's a DB room
+        const isDbRoom = typeof roomId === 'string' && roomId.length > 20 && roomId.includes('-');
+        if (isDbRoom) {
+            try {
+                const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
+                if (room) {
+                    const people = Array.isArray(room.people) ? room.people : [];
+                    if (!people.some(p => String(p.id) === String(user.id))) {
+                        await supabase.from('rooms')
+                            .update({ 
+                                people: [user, ...people], 
+                                last_active: new Date().toISOString() 
+                            })
+                            .eq('id', roomId);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to sync participant to DB:', err);
             }
-        } catch {}
+        } else {
+            // For local/mock rooms, save to a special local storage key to persist participant across refreshes
+            const overrides = JSON.parse(localStorage.getItem('room_participant_overrides') || '{}');
+            const currentPeople = overrides[roomId] || [];
+            if (!currentPeople.some(p => String(p.id) === String(user.id))) {
+                overrides[roomId] = [user, ...currentPeople];
+                localStorage.setItem('room_participant_overrides', JSON.stringify(overrides));
+            }
+        }
     }, []);
 
     // REMOVE PARTICIPANT (on Leave)
