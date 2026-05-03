@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, LogOut, Trash2, Plus, Edit2, AlertCircle, Check, X, LayoutDashboard, MonitorPlay, AlertTriangle, Image as ImageIcon, MessageSquare } from 'lucide-react';
 import BannerManagement from '../components/Admin/BannerManagement';
 import { getBannersApi, updateBannerApi, uploadBannerApi, deleteBannerApi } from '../api/bannerApi';
+import { supabase } from '../supabase/config';
 
 const Admin = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -13,17 +14,25 @@ const Admin = () => {
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('dashboard');
 
-    const [rooms, setRooms] = useState(() => {
-        const savedRooms = localStorage.getItem('adminRooms');
-        return savedRooms ? JSON.parse(savedRooms) : [];
-    });
+    const [rooms, setRooms] = useState([]);
+
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchRooms();
+        }
+    }, [isAuthenticated]);
+
+    const fetchRooms = async () => {
+        const { data, error } = await supabase
+            .from('rooms')
+            .select('*')
+            .order('created_at', { ascending: false });
+        if (data) setRooms(data);
+    };
 
     const [reportedRooms, setReportedRooms] = useState(() => {
         const savedReports = localStorage.getItem('reportedRooms');
-        return savedReports ? JSON.parse(savedReports) : [
-            { id: 9991, title: 'Inappropriate Content', language: 'English', reason: 'Abusive language', reporter: 'User_442' },
-            { id: 9992, title: 'Spam Room', language: 'Arabic', reason: 'Spamming links', reporter: 'Admin_Bot' }
-        ];
+        return savedReports ? JSON.parse(savedReports) : [];
     });
 
     const [showModal, setShowModal] = useState(false);
@@ -55,10 +64,6 @@ const Admin = () => {
     };
 
     useEffect(() => {
-        localStorage.setItem('adminRooms', JSON.stringify(rooms));
-    }, [rooms]);
-
-    useEffect(() => {
         localStorage.setItem('reportedRooms', JSON.stringify(reportedRooms));
     }, [reportedRooms]);
 
@@ -77,6 +82,7 @@ const Admin = () => {
             localStorage.setItem('isAdmin', 'true');
             setError('');
             fetchBanners();
+            fetchRooms();
         } else {
             setError('Invalid credentials. Access denied.');
         }
@@ -88,9 +94,18 @@ const Admin = () => {
         navigate('/');
     };
 
-    const handleDeleteRoom = (roomId) => {
-        if (window.confirm('Are you sure you want to delete this room?')) {
-            setRooms(rooms.filter(r => r.id !== roomId));
+    const handleDeleteRoom = async (roomId) => {
+        if (window.confirm('Are you sure you want to delete this room from the database?')) {
+            try {
+                const { error } = await supabase.from('rooms').delete().eq('id', roomId);
+                if (!error) {
+                    setRooms(rooms.filter(r => r.id !== roomId));
+                } else {
+                    alert('Error deleting room: ' + error.message);
+                }
+            } catch (err) {
+                alert('Failed to connect to database.');
+            }
         }
     };
 
@@ -105,26 +120,18 @@ const Admin = () => {
         setShowModal(true);
     };
 
-    const handleSaveRoom = (e) => {
+    const handleSaveRoom = async (e) => {
         e.preventDefault();
         if (editingRoom) {
-            setRooms(rooms.map(r => r.id === editingRoom.id ? {
-                ...r,
+            const updated = {
                 title: roomForm.title,
                 language: roomForm.language,
-                category: roomForm.category,
-                profile: { ...r.profile, username: roomForm.creator }
-            } : r));
-        } else {
-            const newRoom = {
-                id: Date.now(),
-                title: roomForm.title,
-                language: roomForm.language,
-                category: roomForm.category,
-                profile: { username: roomForm.creator, avatar: '/profiles/Abraham Baker.webp' },
-                participantCount: 0
+                // category is not always in DB schema, but we'll try
             };
-            setRooms([newRoom, ...rooms]);
+            const { error } = await supabase.from('rooms').update(updated).eq('id', editingRoom.id);
+            if (!error) fetchRooms();
+        } else {
+            // Logic for manual creation via admin if needed
         }
         setShowModal(false);
         setEditingRoom(null);
