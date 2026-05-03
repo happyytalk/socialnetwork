@@ -8,9 +8,16 @@ import ErrorBoundary from './ErrorBoundary';
 import './index.css';
 
 const rootElement = document.getElementById('root');
-// Silence AbortError unhandled rejections (usually from navigating away from a page mid-fetch)
+// Silence AbortError and lock-related unhandled rejections
 window.addEventListener('unhandledrejection', (event) => {
-  if (event.reason?.name === 'AbortError' || event.reason?.message?.includes('aborted')) {
+  const reason = event.reason;
+  const name = reason?.name;
+  const message = reason?.message;
+  
+  if (name === 'AbortError' || 
+      message?.includes('aborted') || 
+      message?.includes('Lock broken by another request') ||
+      message?.includes('Lock was stolen')) {
     event.preventDefault();
   }
 });

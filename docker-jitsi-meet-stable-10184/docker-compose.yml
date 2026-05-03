@@ -17,6 +17,11 @@ services:
             - ./branding/favicon.ico:/usr/share/jitsi-meet/favicon.ico:Z
             - ./branding/favicon.svg:/usr/share/jitsi-meet/images/favicon.svg:Z
             - ./branding/close.html:/usr/share/jitsi-meet/close.html:Z
+            - ./branding/close.html:/usr/share/jitsi-meet/static/close.html:Z
+            - ./branding/close.html:/usr/share/jitsi-meet/static/close2.html:Z
+            - ./branding/index.html:/usr/share/jitsi-meet/index.html:Z
+            - ./branding/title.html:/usr/share/jitsi-meet/title.html:Z
+            - ./branding/manifest.json:/usr/share/jitsi-meet/manifest.json:Z
         labels:
             service: "jitsi-web"
         environment:
