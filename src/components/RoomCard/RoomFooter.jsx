@@ -26,7 +26,9 @@ const RoomFooter = ({
     
     const hostDisplayName = host?.username && 
         !host.username.startsWith('user_') && 
-        host.username !== 'system'
+        host.username !== 'system' &&
+        host.username !== '!' &&
+        host.username.length > 1
         ? host.username
         : isSystemRoom || isMockLikeId
             ? getRandomNameByLanguage(language || 'English', id)

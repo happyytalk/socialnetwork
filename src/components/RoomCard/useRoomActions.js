@@ -6,7 +6,7 @@ import { useRooms } from '../../contexts/RoomsContext';
 
 export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
     const socket = useSocket();
-    const { addParticipant, removeParticipant, deleteRoom: contextDeleteRoom } = useRooms();
+    const { addParticipant, removeParticipant, deleteRoom: contextDeleteRoom, reportRoom } = useRooms();
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showLoginModal, setShowLoginModal] = useState(false);
@@ -188,6 +188,13 @@ export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
         }
     };
 
+    const handleReportRoom = async () => {
+        if (window.confirm("Are you sure you want to report this room? Multiple reports will lead to its removal.")) {
+            await reportRoom(id);
+            setShowMenu(false);
+        }
+    };
+
     return {
         showDeleteConfirm, setShowDeleteConfirm,
         isDeleting,
@@ -198,6 +205,7 @@ export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
         handleJoinRoom,
         handleShare,
         handleTogglePrivacy,
-        handleDeleteRoom
+        handleDeleteRoom,
+        handleReportRoom
     };
 };

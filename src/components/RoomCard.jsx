@@ -23,7 +23,8 @@ const RoomCard = ({ room, currentUser: propCurrentUser, onTopicUpdated, highligh
         handleJoinRoom,
         handleShare,
         handleTogglePrivacy,
-        handleDeleteRoom
+        handleDeleteRoom,
+        handleReportRoom
     } = useRoomActions({ room, currentUser, onTopicUpdated });
 
     const {
@@ -84,6 +85,7 @@ const RoomCard = ({ room, currentUser: propCurrentUser, onTopicUpdated, highligh
                     title={filterProfanity(title)} topic={filterProfanity(topic)} language={language} level={level} is_private={is_private}
                     isOwner={isOwner} showMenu={showMenu} setShowMenu={setShowMenu}
                     handleTogglePrivacy={handleTogglePrivacy} setShowDeleteConfirm={setShowDeleteConfirm}
+                    handleReportRoom={handleReportRoom}
                 />
 
                 <RoomAvatars 

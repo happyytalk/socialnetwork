@@ -10,7 +10,8 @@ const RoomHeader = ({
     showMenu, 
     setShowMenu, 
     handleTogglePrivacy, 
-    setShowDeleteConfirm 
+    setShowDeleteConfirm,
+    handleReportRoom
 }) => {
     return (
         <div className="flex items-start justify-between gap-2 w-full">
@@ -78,40 +79,49 @@ const RoomHeader = ({
                     }
                 </div>
 
-                {isOwner && (
-                    <div className="relative">
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
-                            className="flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
-                            style={{ width: '28px', height: '28px', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}
-                        >
-                            <i className="fas fa-ellipsis-v" style={{ fontSize: '0.9rem' }}></i>
-                        </button>
+                <div className="relative">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+                        className="flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+                        style={{ width: '28px', height: '28px', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}
+                    >
+                        <i className="fas fa-ellipsis-v" style={{ fontSize: '0.9rem' }}></i>
+                    </button>
 
-                        {showMenu && (
-                            <div 
-                                className="absolute right-0 mt-2 w-48 rounded-xl shadow-2xl z-[60] border border-white/10 overflow-hidden"
-                                style={{ background: 'rgba(15, 23, 42, 0.95)', backdropFilter: 'blur(10px)' }}
-                                onClick={(e) => e.stopPropagation()}
+                    {showMenu && (
+                        <div 
+                            className="absolute right-0 mt-2 w-48 rounded-xl shadow-2xl z-[60] border border-white/10 overflow-hidden"
+                            style={{ background: 'rgba(15, 23, 42, 0.95)', backdropFilter: 'blur(10px)' }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {isOwner && (
+                                <>
+                                    <button
+                                        onClick={handleTogglePrivacy}
+                                        className="w-full px-4 py-3 text-left text-sm text-white hover:bg-white/10 flex items-center gap-3 transition-colors border-none bg-transparent cursor-pointer"
+                                    >
+                                        <i className={`fas ${is_private ? 'fa-globe' : 'fa-lock'} text-blue-400 w-4`}></i>
+                                        {is_private ? 'Make Public' : 'Make Private'}
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowDeleteConfirm(true); }}
+                                        className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-red-400/10 flex items-center gap-3 transition-colors border-none bg-transparent cursor-pointer"
+                                    >
+                                        <i className="fas fa-trash-alt w-4"></i>
+                                        Delete Room
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                onClick={handleReportRoom}
+                                className="w-full px-4 py-3 text-left text-sm text-yellow-400 hover:bg-yellow-400/10 flex items-center gap-3 transition-colors border-none bg-transparent cursor-pointer"
                             >
-                                <button
-                                    onClick={handleTogglePrivacy}
-                                    className="w-full px-4 py-3 text-left text-sm text-white hover:bg-white/10 flex items-center gap-3 transition-colors border-none bg-transparent cursor-pointer"
-                                >
-                                    <i className={`fas ${is_private ? 'fa-globe' : 'fa-lock'} text-blue-400 w-4`}></i>
-                                    {is_private ? 'Make Public' : 'Make Private'}
-                                </button>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowDeleteConfirm(true); }}
-                                    className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-red-400/10 flex items-center gap-3 transition-colors border-none bg-transparent cursor-pointer"
-                                >
-                                    <i className="fas fa-trash-alt w-4"></i>
-                                    Delete Room
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                )}
+                                <i className="fas fa-exclamation-triangle w-4"></i>
+                                Report Room
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

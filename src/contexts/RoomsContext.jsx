@@ -137,13 +137,11 @@ export const RoomsProvider = ({ children }) => {
     const createRoom = useCallback(async (roomData, currentUser) => {
         const slug = roomData.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
         
-        const username = currentUser
-            ? (currentUser.user_metadata?.username 
-               || currentUser.user_metadata?.full_name
-               || currentUser.user_metadata?.name 
-               || currentUser.email?.split('@')[0] 
-               || 'HappyTalk User')
-            : 'Guest';
+        // Improved username detection (avoid single-character names)
+        let username = currentUser?.user_metadata?.username || currentUser?.username || 'Learner';
+        if (username.length < 2) {
+            username = currentUser?.email?.split('@')[0] || 'Learner';
+        }
 
         const avatar = currentUser
             ? (currentUser.user_metadata?.avatar_url 
@@ -159,7 +157,7 @@ export const RoomsProvider = ({ children }) => {
             created_by: currentUser?.id || 'guest',
             jitsi_room_name: slug,
             is_private: roomData.is_private || false,
-            people: [], // ← EMPTY: creator is NOT auto-added to participants
+            people: [], 
             last_active: new Date().toISOString(),
             created_at: new Date().toISOString(),
             // Store creator info for "Created by" display
@@ -172,7 +170,6 @@ export const RoomsProvider = ({ children }) => {
 
         let savedRoom = { ...newRoom, id: `local-${Date.now()}` };
 
-        // Try to save to Supabase DB
         try {
             const { data, error } = await supabase
                 .from('rooms')
@@ -181,34 +178,20 @@ export const RoomsProvider = ({ children }) => {
                 .single();
             if (!error && data) {
                 savedRoom = data;
-                console.log('✅ Room saved to Supabase:', savedRoom.id);
-            } else {
-                console.warn('⚠️ Supabase insert failed, using local fallback:', error?.message);
             }
-        } catch (err) {
-            console.warn('⚠️ Supabase unavailable, using local fallback');
-        }
+        } catch (err) {}
 
-        // Save to local storage as well (for refresh persistence)
         const localRooms = getLocalRooms();
         localRooms.unshift(savedRoom);
         saveLocalRooms(localRooms);
-
-        // Update local state immediately
         setRooms(prev => [savedRoom, ...prev]);
 
-        // BROADCAST to all other browsers via Supabase channel
         if (channelRef.current) {
-            try {
-                await channelRef.current.send({
-                    type: 'broadcast',
-                    event: 'room_created',
-                    payload: { room: savedRoom }
-                });
-                console.log('📡 Room broadcasted to all browsers');
-            } catch (err) {
-                console.warn('Broadcast failed:', err);
-            }
+            channelRef.current.send({
+                type: 'broadcast',
+                event: 'room_created',
+                payload: { room: savedRoom }
+            });
         }
 
         return savedRoom;
@@ -216,17 +199,10 @@ export const RoomsProvider = ({ children }) => {
 
     // DELETE ROOM
     const deleteRoom = useCallback(async (roomId) => {
-        // Remove from state
         setRooms(prev => prev.filter(r => r.id !== roomId));
-
-        // Remove from local
         const localRooms = getLocalRooms();
         saveLocalRooms(localRooms.filter(r => r.id !== roomId));
-
-        // Remove from Supabase
         try { await supabase.from('rooms').delete().eq('id', roomId); } catch {}
-
-        // Broadcast deletion
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
@@ -248,7 +224,6 @@ export const RoomsProvider = ({ children }) => {
 
         setRooms(updateFn);
 
-        // Update in DB
         try {
             const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
             if (room) {
@@ -257,7 +232,6 @@ export const RoomsProvider = ({ children }) => {
                     const { data } = await supabase.from('rooms')
                         .update({ people: [user, ...people], last_active: new Date().toISOString() })
                         .eq('id', roomId).select().single();
-                    // Broadcast update
                     channelRef.current?.send({ type: 'broadcast', event: 'room_updated', payload: { room: data } });
                 }
             }
@@ -281,10 +255,49 @@ export const RoomsProvider = ({ children }) => {
         } catch {}
     }, []);
 
+    // REPORT ROOM (10 reports = delete)
+    const reportRoom = useCallback(async (roomId) => {
+        let isDeleted = false;
+        let updatedRoom = null;
+
+        setRooms(prev => {
+            const newRooms = prev.map(r => {
+                if (r.id !== roomId) return r;
+                const count = (r.report_count || 0) + 1;
+                if (count >= 10) {
+                    isDeleted = true;
+                    return null;
+                }
+                updatedRoom = { ...r, report_count: count };
+                return updatedRoom;
+            }).filter(Boolean);
+            return newRooms;
+        });
+
+        if (isDeleted) {
+            await deleteRoom(roomId);
+            alert("This room has been removed due to multiple community reports.");
+        } else if (updatedRoom) {
+            try {
+                await supabase.from('rooms').update({ report_count: updatedRoom.report_count }).eq('id', roomId);
+                channelRef.current?.send({ type: 'broadcast', event: 'room_updated', payload: { room: updatedRoom } });
+            } catch {}
+        }
+    }, [deleteRoom]);
+
     const refreshRooms = useCallback(() => fetchAllRooms(), [fetchAllRooms]);
 
     return (
-        <RoomsContext.Provider value={{ rooms, setRooms, createRoom, deleteRoom, addParticipant, removeParticipant, refreshRooms }}>
+        <RoomsContext.Provider value={{ 
+            rooms, 
+            setRooms, 
+            createRoom, 
+            deleteRoom, 
+            addParticipant, 
+            removeParticipant, 
+            refreshRooms,
+            reportRoom 
+        }}>
             {children}
         </RoomsContext.Provider>
     );

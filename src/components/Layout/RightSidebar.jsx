@@ -202,7 +202,7 @@ const RightSidebar = ({ isOpen, onClose, onCreateRoomClick }) => {
                                                     <img src="/ai-logo.png" alt="AI" className="w-full h-full object-contain" />
                                                 </div>
                                                 <h3 className="text-2xl font-black text-white uppercase tracking-tighter leading-none">
-                                                    {profileData?.username || currentUser?.username}
+                                                    {(profileData?.username || currentUser?.user_metadata?.username || currentUser?.username || currentUser?.email?.split('@')[0])}
                                                 </h3>
                                                 <button
                                                     onClick={() => handleFeatureClick('/profile')}
@@ -211,10 +211,7 @@ const RightSidebar = ({ isOpen, onClose, onCreateRoomClick }) => {
                                                     <span className="text-[10px] font-bold uppercase tracking-widest">Edit Profile</span>
                                                 </button>
                                             </div>
-                                            <p className="user-email text-[12px] text-gray-400 font-medium break-all mb-3 px-4 leading-relaxed">
-                                                {currentUser?.email}
-                                            </p>
-                                            <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-white/5 w-full">
+                                            <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-white/5 w-full mt-2">
                                                 <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]"></span>
                                                 <span className="text-[11px] text-green-500 font-black uppercase tracking-widest">Active Now</span>
                                             </div>
