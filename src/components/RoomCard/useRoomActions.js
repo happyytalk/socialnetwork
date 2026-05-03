@@ -100,9 +100,9 @@ export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
             
             const userData = {
                 id: currentUser?.id || `guest-${Math.random().toString(36).substr(2, 9)}`,
-                name: currentUser?.user_metadata?.username || currentUser?.username || 'Guest',
-                username: currentUser?.user_metadata?.username || currentUser?.username || 'Guest',
-                avatar_url: currentUser?.user_metadata?.avatar_url || currentUser?.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${Math.random()}`
+                name: currentUser?.user_metadata?.username || currentUser?.username || currentUser?.email?.split('@')[0] || 'Learner',
+                username: currentUser?.user_metadata?.username || currentUser?.username || currentUser?.email?.split('@')[0] || 'Learner',
+                avatar_url: currentUser?.user_metadata?.avatar_url || currentUser?.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${currentUser?.username || currentUser?.id || 'Guest'}`
             };
             
             // Add to room via context (broadcasts to all browsers)

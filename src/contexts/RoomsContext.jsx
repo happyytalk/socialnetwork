@@ -105,7 +105,13 @@ export const RoomsProvider = ({ children }) => {
                 setRooms(prev => prev.filter(r => r.id !== payload.roomId));
             })
             .on('broadcast', { event: 'room_updated' }, ({ payload }) => {
-                setRooms(prev => prev.map(r => r.id === payload.room.id ? payload.room : r));
+                const updatedRoom = payload.room;
+                setRooms(prev => {
+                    if (!prev.some(r => r.id === updatedRoom.id)) {
+                        return [updatedRoom, ...prev];
+                    }
+                    return prev.map(r => r.id === updatedRoom.id ? updatedRoom : r);
+                });
             })
             .subscribe((status) => {
                 console.log('Rooms channel status:', status);
@@ -114,31 +120,42 @@ export const RoomsProvider = ({ children }) => {
         channelRef.current = channel;
         globalChannel = channel;
 
-        // Auto-cleanup empty rooms every 3 minutes
-        const cleanupInterval = setInterval(async () => {
+        // Auto-cleanup empty rooms every 30 seconds for better responsiveness
+        const cleanupInterval = setInterval(() => {
             const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
             setRooms(prev => {
                 const toDelete = prev.filter(r => {
-                    if (String(r.id).startsWith('room-gen')) return false;
+                    // Don't auto-delete system rooms
+                    if (String(r.id).startsWith('room-gen') || r.created_by === 'system') return false;
+                    
+                    const hasPeople = Array.isArray(r.people) && r.people.length > 0;
                     const lastActive = new Date(r.last_active || r.created_at);
-                    return (!r.people || r.people.length === 0) && lastActive < threeMinAgo;
+                    
+                    // Delete if empty AND inactive for > 3 minutes
+                    return !hasPeople && lastActive < threeMinAgo;
                 });
+
                 if (toDelete.length === 0) return prev;
 
-                // Clean from local storage
-                const localRooms = getLocalRooms();
                 const deleteIds = new Set(toDelete.map(r => r.id));
-                saveLocalRooms(localRooms.filter(r => !deleteIds.has(r.id)));
-
-                // Clean from Supabase
-                toDelete.forEach(room => {
-                    supabase.from('rooms').delete().eq('id', room.id).then(() => {});
-                    channel.send({ type: 'broadcast', event: 'room_deleted', payload: { roomId: room.id } });
+                
+                // Cleanup DB and Broadcast
+                toDelete.forEach(async (room) => {
+                    console.log(`Auto-deleting empty room: ${room.title}`);
+                    const isDbRoom = typeof room.id === 'string' && room.id.length > 20;
+                    if (isDbRoom) {
+                        await supabase.from('rooms').delete().eq('id', room.id);
+                    }
+                    globalChannel?.send({ type: 'broadcast', event: 'room_deleted', payload: { roomId: room.id } });
                 });
+
+                // Update local storage for non-DB rooms
+                const localRooms = getLocalRooms().filter(r => !deleteIds.has(r.id));
+                saveLocalRooms(localRooms);
 
                 return prev.filter(r => !deleteIds.has(r.id));
             });
-        }, 60 * 1000);
+        }, 30 * 1000);
 
         return () => {
             clearInterval(cleanupInterval);
@@ -236,29 +253,28 @@ export const RoomsProvider = ({ children }) => {
     const addParticipant = useCallback(async (roomId, user) => {
         console.log(`Adding participant ${user.username} to room ${roomId}`);
         
-        // 1. Update local state immediately for instant UI feedback
-        setRooms(prev => prev.map(r => {
-            if (r.id !== roomId) return r;
-            const people = Array.isArray(r.people) ? r.people : [];
-            if (people.some(p => String(p.id) === String(user.id))) return r;
-            return { ...r, people: [user, ...people], last_active: new Date().toISOString() };
-        }));
+        let updatedRoom = null;
 
-        // 2. Broadcast the change to other tabs/browsers immediately
-        if (channelRef.current) {
-            // Find the updated room to broadcast
-            setRooms(currentRooms => {
-                const updatedRoom = currentRooms.find(r => r.id === roomId);
-                if (updatedRoom) {
-                    channelRef.current.send({
-                        type: 'broadcast',
-                        event: 'room_updated',
-                        payload: { room: updatedRoom }
-                    });
-                }
-                return currentRooms;
+        // 1. Update local state and prepare updatedRoom for broadcast
+        setRooms(prev => {
+            const newRooms = prev.map(r => {
+                if (r.id !== roomId) return r;
+                const people = Array.isArray(r.people) ? r.people : [];
+                if (people.some(p => String(p.id) === String(user.id))) return r;
+                updatedRoom = { ...r, people: [user, ...people], last_active: new Date().toISOString() };
+                return updatedRoom;
             });
-        }
+
+            // 2. Broadcast immediately inside the setter to ensure we have the correct data
+            if (updatedRoom && channelRef.current) {
+                channelRef.current.send({
+                    type: 'broadcast',
+                    event: 'room_updated',
+                    payload: { room: updatedRoom }
+                });
+            }
+            return newRooms;
+        });
 
         // 3. Persist to DB if it's a DB room
         const isDbRoom = typeof roomId === 'string' && roomId.length > 20 && roomId.includes('-');
@@ -276,11 +292,8 @@ export const RoomsProvider = ({ children }) => {
                             .eq('id', roomId);
                     }
                 }
-            } catch (err) {
-                console.error('Failed to sync participant to DB:', err);
-            }
+            } catch (err) {}
         } else {
-            // For local/mock rooms, save to a special local storage key to persist participant across refreshes
             const overrides = JSON.parse(localStorage.getItem('room_participant_overrides') || '{}');
             const currentPeople = overrides[roomId] || [];
             if (!currentPeople.some(p => String(p.id) === String(user.id))) {
