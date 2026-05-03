@@ -41,11 +41,17 @@ export const RoomsProvider = ({ children }) => {
         const localCreated = getLocalRooms();
         const guestRooms = getGuestRooms();
 
+        const BLACKLISTED_TITLES = ['Zero to Hero Beginners', 'Grammar Practice', 'Vocabulary Voyagers', '📚 Grammar Practice'];
+
         const allRooms = [...dbRooms, ...localCreated, ...guestRooms, ...mockRooms];
         const seen = new Set();
         const unique = allRooms.filter(r => {
             const key = r.id || r.jitsi_room_name;
             if (seen.has(key)) return false;
+            
+            // Explicitly filter out the test rooms the user wants removed
+            if (r.title && BLACKLISTED_TITLES.some(t => r.title.includes(t))) return false;
+            
             seen.add(key);
             return true;
         });

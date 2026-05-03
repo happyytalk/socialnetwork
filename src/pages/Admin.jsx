@@ -33,7 +33,13 @@ const Admin = () => {
         } catch (e) {}
 
         const { mockRooms } = await import('../data/mockRooms');
-        setRooms([...dbRooms, ...mockRooms]);
+        const BLACKLISTED_TITLES = ['Zero to Hero Beginners', 'Grammar Practice', 'Vocabulary Voyagers', '📚 Grammar Practice'];
+        
+        const all = [...dbRooms, ...mockRooms].filter(r => {
+            if (r.title && BLACKLISTED_TITLES.some(t => r.title.includes(t))) return false;
+            return true;
+        });
+        setRooms(all);
     };
 
     const [reportedRooms, setReportedRooms] = useState(() => {
