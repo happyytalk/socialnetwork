@@ -26,7 +26,7 @@ services:
             service: "jitsi-web"
         environment:
             - AMPLITUDE_ID
-            - APP_NAME=HappyTalk.in
+            - APP_NAME=HappyTalk
             - ANALYTICS_SCRIPT_URLS
             - ANALYTICS_WHITELISTED_EVENTS
             - AUDIO_QUALITY_OPUS_BITRATE

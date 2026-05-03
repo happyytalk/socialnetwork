@@ -214,3 +214,4 @@ config.whiteboard = {
 config.testing = {
     enableCodecSelectionAPI: true
 };
+config.appName = 'HappyTalk';
