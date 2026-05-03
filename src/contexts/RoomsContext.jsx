@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../supabase/config';
-import { mockRooms } from '../data/mockRooms';
 import { getGuestRooms } from '../utils/guestRoomManager';
 
 const RoomsContext = createContext({});
@@ -41,7 +40,7 @@ export const RoomsProvider = ({ children }) => {
         const localCreated = getLocalRooms();
         const guestRooms = getGuestRooms();
 
-        const allRooms = [...dbRooms, ...localCreated, ...guestRooms, ...mockRooms];
+        const allRooms = [...dbRooms, ...localCreated, ...guestRooms];
         const seen = new Set();
         const unique = allRooms.filter(r => {
             const key = r.id || r.jitsi_room_name;
@@ -163,7 +162,7 @@ export const RoomsProvider = ({ children }) => {
             created_by: currentUser?.id || 'guest',
             jitsi_room_name: slug,
             is_private: roomData.is_private || false,
-            people: [creatorProfile], // ← AUTO-JOIN: creator is added to participants
+            people: [], // ← Reverted: creator is NOT auto-added to participants
             last_active: new Date().toISOString(),
             created_at: new Date().toISOString(),
             // Store creator info for "Created by" display
