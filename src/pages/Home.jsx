@@ -280,7 +280,7 @@ function Home() {
                 key={room.id}
                 room={room}
                 currentUser={currentUser}
-                onTopicUpdated={fetchData}
+                onTopicUpdated={refreshRooms}
                 highlightedAvatars={highlightedAvatars}
               />
             ))}
@@ -315,7 +315,7 @@ function Home() {
                       <RoomCard
                         room={room}
                         currentUser={currentUser}
-                        onTopicUpdated={fetchData}
+                        onTopicUpdated={refreshRooms}
                         highlightedAvatars={highlightedAvatars}
                       />
                     </div>
@@ -345,7 +345,7 @@ function Home() {
     return (
       <div className="flex flex-col justify-center items-center h-screen text-red-500">
         <p>{error}</p>
-        <button onClick={fetchData} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Retry</button>
+        <button onClick={refreshRooms} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Retry</button>
       </div>
     );
   }

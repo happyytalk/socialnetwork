@@ -98,27 +98,40 @@ const ProfileCard = () => {
       const displayData = {
         ...initialProfileState, // Start with defaults
         id: fetchedData.id,
-        name: fetchedData.username || 'User', // Use 'username' from backend for 'name'
+        name: fetchedData.username || fetchedData.name || 'User', 
         username: fetchedData.username || 'User',
         bio: fetchedData.bio || '',
         avatar_url: fetchedData.avatar_url || initialProfileState.avatar_url,
         socials: fetchedData.socials || initialProfileState.socials,
-        // Map stats - these might need separate fetches or be part of 'profiles' table
-        stats: {
-          followers: 0,
-          following: 0,
-          likes: 0,
-        },
-        followers_count: 0,
-        following_count: 0,
+        stats: fetchedData.stats || initialProfileState.stats,
+        followers_count: fetchedData.followers_count || 0,
+        following_count: fetchedData.following_count || 0,
       };
 
       setProfileData(displayData);
-      setEditFormData(displayData); // Initialize edit form with fetched data
+      setEditFormData(displayData); 
     } catch (err) {
       console.error("Failed to fetch profile:", err);
-      setError(err.message || 'Failed to load profile.');
-      if (err.status === 401 && !userId) { // If fetching own profile and unauthorized
+      
+      // CRITICAL FALLBACK: If viewing own profile and API fails, use currentUser metadata
+      if (!userId || userId === currentUser?.id) {
+        console.warn("Using currentUser metadata fallback for profile display");
+        const fallbackData = {
+          ...initialProfileState,
+          id: currentUser.id,
+          name: currentUser.user_metadata?.username || currentUser.user_metadata?.name || currentUser.email?.split('@')[0] || 'User',
+          username: currentUser.user_metadata?.username || 'User',
+          avatar_url: currentUser.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${currentUser.id}`,
+          bio: 'Hey there! I am using HappyTalk.'
+        };
+        setProfileData(fallbackData);
+        setEditFormData(fallbackData);
+        setError(null); // Clear error since we have a fallback
+      } else {
+        setError(err.message || 'Failed to load profile.');
+      }
+      
+      if (err.status === 401 && !userId) { 
         navigate('/in');
       }
     } finally {
