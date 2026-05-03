@@ -369,7 +369,9 @@ const Admin = () => {
                                                     <td className="py-4 px-6">
                                                         <span className="px-3 py-1 bg-[#161616] text-gray-600 rounded-lg text-[10px] font-black uppercase inline-block">{room.language}</span>
                                                     </td>
-                                                    <td className="py-4 px-6 text-gray-600 font-semibold text-sm">{room.profile?.username || room.creator}</td>
+                                                    <td className="py-4 px-6 text-gray-600 font-semibold text-sm">
+                                                        {room.profile?.username || (typeof room.creator === 'object' ? room.creator?.username || room.creator?.name : room.creator) || 'System'}
+                                                    </td>
                                                     <td className="py-4 px-6 text-right space-x-2">
                                                         <button onClick={() => handleEditRoom(room)} className="p-2.5 bg-[#111111] hover:bg-white/10 text-gray-500 hover:text-white rounded-xl transition-all inline-block" title="Edit Room"><Edit2 size={16} /></button>
                                                         <button onClick={() => handleDeleteRoom(room.id)} className="p-2.5 bg-[#111111] hover:bg-red-500/20 text-gray-500 hover:text-red-500 rounded-xl transition-all inline-block" title="Delete Room"><Trash2 size={16} /></button>
