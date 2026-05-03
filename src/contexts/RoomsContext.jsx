@@ -149,20 +149,20 @@ export const RoomsProvider = ({ children }) => {
                || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`)
             : `https://api.dicebear.com/7.x/initials/svg?seed=Guest`;
 
+        const GUEST_ID = '00000000-0000-0000-0000-000000000000';
         const newRoom = {
             title: roomData.title,
-            topic: roomData.topic || roomData.language,
-            language: roomData.language,
+            topic: roomData.topic || roomData.language || 'General',
+            language: roomData.language || 'English',
             level: roomData.level || 'Beginner (A1)',
-            created_by: currentUser?.id || 'guest',
+            created_by: currentUser?.id || GUEST_ID,
             jitsi_room_name: slug,
             is_private: roomData.is_private || false,
-            people: [], // ← BACK TO EMPTY: creator NOT auto-added
+            people: [], 
             last_active: new Date().toISOString(),
             created_at: new Date().toISOString(),
-            // Store creator info for "Created by" display
             profile: {
-                id: currentUser?.id || 'guest',
+                id: currentUser?.id || GUEST_ID,
                 username: username,
                 avatar_url: avatar
             }
@@ -176,10 +176,16 @@ export const RoomsProvider = ({ children }) => {
                 .insert([newRoom])
                 .select()
                 .single();
-            if (!error && data) {
+            
+            if (error) {
+                console.error('Supabase room creation error:', error);
+            } else if (data) {
                 savedRoom = data;
+                console.log('Room successfully saved to DB:', savedRoom.id);
             }
-        } catch (err) {}
+        } catch (err) {
+            console.error('Failed to insert room:', err);
+        }
 
         const localRooms = getLocalRooms();
         localRooms.unshift(savedRoom);

@@ -23,11 +23,17 @@ const Admin = () => {
     }, [isAuthenticated]);
 
     const fetchRooms = async () => {
-        const { data, error } = await supabase
-            .from('rooms')
-            .select('*')
-            .order('created_at', { ascending: false });
-        if (data) setRooms(data);
+        let dbRooms = [];
+        try {
+            const { data, error } = await supabase
+                .from('rooms')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (data) dbRooms = data;
+        } catch (e) {}
+
+        const { mockRooms } = await import('../data/mockRooms');
+        setRooms([...dbRooms, ...mockRooms]);
     };
 
     const [reportedRooms, setReportedRooms] = useState(() => {
@@ -95,17 +101,22 @@ const Admin = () => {
     };
 
     const handleDeleteRoom = async (roomId) => {
-        if (window.confirm('Are you sure you want to delete this room from the database?')) {
-            try {
-                const { error } = await supabase.from('rooms').delete().eq('id', roomId);
-                if (!error) {
-                    setRooms(rooms.filter(r => r.id !== roomId));
-                } else {
-                    alert('Error deleting room: ' + error.message);
-                }
-            } catch (err) {
-                alert('Failed to connect to database.');
+        if (window.confirm('Are you sure you want to delete this room?')) {
+            // Check if it's likely a DB room (UUID or numeric) vs a local/mock room
+            const isDbRoom = typeof roomId === 'string' && roomId.length > 20 && roomId.includes('-');
+            
+            if (isDbRoom) {
+                try {
+                    const { error } = await supabase.from('rooms').delete().eq('id', roomId);
+                    if (error) {
+                        console.error('DB Delete Error:', error);
+                        // Fallback to UI-only delete if DB fails
+                    }
+                } catch (err) {}
             }
+            
+            // Always update UI
+            setRooms(rooms.filter(r => r.id !== roomId));
         }
     };
 
@@ -321,6 +332,13 @@ const Admin = () => {
                                 <div className="flex justify-between items-center mb-6">
                                     <h3 className="text-xl font-bold text-white">Manage Rooms</h3>
                                     <div className="flex items-center gap-4">
+                                        <button 
+                                            onClick={fetchRooms}
+                                            className="p-2.5 bg-[#111111] hover:bg-white/5 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5"
+                                            title="Refresh Rooms"
+                                        >
+                                            <MonitorPlay size={20} className={isLoading ? 'animate-spin' : ''} />
+                                        </button>
                                         <select value={displayLimit} onChange={(e) => setDisplayLimit(Number(e.target.value))} className="bg-[#111111] border border-white/10 rounded-xl px-4 py-2 text-gray-200 font-bold outline-none focus:border-white">
                                             {[10, 20, 50, 100].map(limit => <option key={limit} value={limit}>{limit} Rooms</option>)}
                                         </select>

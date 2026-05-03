@@ -32,7 +32,8 @@ const RoomCard = ({ room, currentUser: propCurrentUser, onTopicUpdated, highligh
         created_by, is_private, language, is_guest_room, level
     } = room;
 
-    const isOwner = (currentUser && (String(currentUser.id) === String(created_by))) || 
+    const isAdmin = localStorage.getItem('isAdmin') === 'true';
+    const isOwner = isAdmin || (currentUser && (String(currentUser.id) === String(created_by))) || 
                     (JSON.parse(localStorage.getItem('happytalk_my_rooms') || '[]').includes(id));
 
     // Deduplicate participants
