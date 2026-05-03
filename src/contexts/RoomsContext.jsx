@@ -9,7 +9,6 @@ export const useRooms = () => useContext(RoomsContext);
 
 // Global channel singleton - shared across all instances
 let globalChannel = null;
-let globalListeners = [];
 
 const BROADCAST_CHANNEL = 'happytalk_rooms_v1';
 const LOCAL_ROOMS_KEY = 'happytalk_created_rooms';
@@ -74,7 +73,6 @@ export const RoomsProvider = ({ children }) => {
 
         const channel = supabase
             .channel(BROADCAST_CHANNEL, { config: { broadcast: { self: false } } })
-            // Supabase DB changes (if rooms table + replication enabled)
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rooms' }, ({ new: newRoom }) => {
                 setRooms(prev => {
                     if (prev.some(r => r.id === newRoom.id)) return prev;
@@ -87,73 +85,59 @@ export const RoomsProvider = ({ children }) => {
             .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'rooms' }, ({ old }) => {
                 setRooms(prev => prev.filter(r => r.id !== old.id));
             })
-            // Broadcast events (works even WITHOUT DB table – cross-browser sync)
             .on('broadcast', { event: 'room_created' }, ({ payload }) => {
                 const newRoom = payload.room;
                 setRooms(prev => {
                     if (prev.some(r => r.id === newRoom.id)) return prev;
                     return [newRoom, ...prev];
                 });
-                // Also persist to local so it survives refresh
-                const localRooms = getLocalRooms();
-                if (!localRooms.some(r => r.id === newRoom.id)) {
-                    localRooms.unshift(newRoom);
-                    saveLocalRooms(localRooms);
-                }
             })
             .on('broadcast', { event: 'room_deleted' }, ({ payload }) => {
+                console.log('Sync Delete:', payload.roomId);
                 setRooms(prev => prev.filter(r => r.id !== payload.roomId));
             })
             .on('broadcast', { event: 'room_updated' }, ({ payload }) => {
                 const updatedRoom = payload.room;
                 setRooms(prev => {
-                    if (!prev.some(r => r.id === updatedRoom.id)) {
-                        return [updatedRoom, ...prev];
-                    }
+                    const exists = prev.some(r => r.id === updatedRoom.id);
+                    if (!exists) return [updatedRoom, ...prev];
                     return prev.map(r => r.id === updatedRoom.id ? updatedRoom : r);
                 });
             })
-            .subscribe((status) => {
-                console.log('Rooms channel status:', status);
-            });
+            .subscribe();
 
         channelRef.current = channel;
         globalChannel = channel;
 
-        // Auto-cleanup empty rooms every 30 seconds for better responsiveness
+        // Auto-cleanup empty rooms every 30 seconds
         const cleanupInterval = setInterval(() => {
             const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
+            
             setRooms(prev => {
                 const toDelete = prev.filter(r => {
-                    // Don't auto-delete system rooms
                     if (String(r.id).startsWith('room-gen') || r.created_by === 'system') return false;
-                    
-                    const hasPeople = Array.isArray(r.people) && r.people.length > 0;
+                    const people = Array.isArray(r.people) ? r.people : [];
                     const lastActive = new Date(r.last_active || r.created_at);
-                    
-                    // Delete if empty AND inactive for > 3 minutes
-                    return !hasPeople && lastActive < threeMinAgo;
+                    // 3 MINUTE RULE: Delete if 0 people AND no activity for 3 mins
+                    return people.length === 0 && lastActive < threeMinAgo;
                 });
 
                 if (toDelete.length === 0) return prev;
 
-                const deleteIds = new Set(toDelete.map(r => r.id));
-                
-                // Cleanup DB and Broadcast
                 toDelete.forEach(async (room) => {
-                    console.log(`Auto-deleting empty room: ${room.title}`);
+                    console.log(`Cleanup: Deleting room "${room.title}"`);
                     const isDbRoom = typeof room.id === 'string' && room.id.length > 20;
                     if (isDbRoom) {
                         await supabase.from('rooms').delete().eq('id', room.id);
                     }
-                    globalChannel?.send({ type: 'broadcast', event: 'room_deleted', payload: { roomId: room.id } });
+                    globalChannel?.send({
+                        type: 'broadcast',
+                        event: 'room_deleted',
+                        payload: { roomId: room.id }
+                    });
                 });
 
-                // Update local storage for non-DB rooms
-                const localRooms = getLocalRooms().filter(r => !deleteIds.has(r.id));
-                saveLocalRooms(localRooms);
-
-                return prev.filter(r => !deleteIds.has(r.id));
+                return prev.filter(r => !toDelete.some(td => td.id === r.id));
             });
         }, 30 * 1000);
 
@@ -164,21 +148,14 @@ export const RoomsProvider = ({ children }) => {
         };
     }, [fetchAllRooms]);
 
-    // CREATE ROOM - stores in Supabase + broadcasts to all browsers
+    // CREATE ROOM
     const createRoom = useCallback(async (roomData, currentUser) => {
         const slug = roomData.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        let username = currentUser?.user_metadata?.username || currentUser?.username || currentUser?.email?.split('@')[0] || 'Learner';
         
-        // Improved username detection (avoid single-character names)
-        let username = currentUser?.user_metadata?.username || currentUser?.username || 'Learner';
-        if (username.length < 2) {
-            username = currentUser?.email?.split('@')[0] || 'Learner';
-        }
-
-        const avatar = currentUser
-            ? (currentUser.user_metadata?.avatar_url 
-               || currentUser.user_metadata?.picture
-               || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`)
-            : `https://api.dicebear.com/7.x/initials/svg?seed=Guest`;
+        const avatar = currentUser?.user_metadata?.avatar_url || 
+                       currentUser?.avatar_url || 
+                       `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`;
 
         const GUEST_ID = '00000000-0000-0000-0000-000000000000';
         const newRoom = {
@@ -202,34 +179,20 @@ export const RoomsProvider = ({ children }) => {
         let savedRoom = { ...newRoom, id: `local-${Date.now()}` };
 
         try {
-            const { data, error } = await supabase
-                .from('rooms')
-                .insert([newRoom])
-                .select()
-                .single();
-            
-            if (error) {
-                console.error('Supabase room creation error:', error);
-            } else if (data) {
-                savedRoom = data;
-                console.log('Room successfully saved to DB:', savedRoom.id);
-            }
-        } catch (err) {
-            console.error('Failed to insert room:', err);
-        }
+            const { data, error } = await supabase.from('rooms').insert([newRoom]).select().single();
+            if (!error && data) savedRoom = data;
+        } catch (err) {}
 
         const localRooms = getLocalRooms();
         localRooms.unshift(savedRoom);
         saveLocalRooms(localRooms);
         setRooms(prev => [savedRoom, ...prev]);
 
-        if (channelRef.current) {
-            channelRef.current.send({
-                type: 'broadcast',
-                event: 'room_created',
-                payload: { room: savedRoom }
-            });
-        }
+        globalChannel?.send({
+            type: 'broadcast',
+            event: 'room_created',
+            payload: { room: savedRoom }
+        });
 
         return savedRoom;
     }, []);
@@ -240,56 +203,33 @@ export const RoomsProvider = ({ children }) => {
         const localRooms = getLocalRooms();
         saveLocalRooms(localRooms.filter(r => r.id !== roomId));
         try { await supabase.from('rooms').delete().eq('id', roomId); } catch {}
-        if (channelRef.current) {
-            channelRef.current.send({
-                type: 'broadcast',
-                event: 'room_deleted',
-                payload: { roomId }
-            });
-        }
+        globalChannel?.send({
+            type: 'broadcast',
+            event: 'room_deleted',
+            payload: { roomId }
+        });
     }, []);
 
-    // ADD PARTICIPANT (on Join)
+    // ADD PARTICIPANT (Accurate Join + No Duplicates)
     const addParticipant = useCallback(async (roomId, user) => {
-        console.log(`Adding participant ${user.username} to room ${roomId}`);
-        
-        let updatedRoom = null;
-
-        // 1. Update local state and prepare updatedRoom for broadcast
-        setRooms(prev => {
-            const newRooms = prev.map(r => {
-                if (r.id !== roomId) return r;
-                const people = Array.isArray(r.people) ? r.people : [];
-                if (people.some(p => String(p.id) === String(user.id))) return r;
-                updatedRoom = { ...r, people: [user, ...people], last_active: new Date().toISOString() };
-                return updatedRoom;
-            });
-
-            // 2. Broadcast immediately inside the setter to ensure we have the correct data
-            if (updatedRoom && channelRef.current) {
-                channelRef.current.send({
-                    type: 'broadcast',
-                    event: 'room_updated',
-                    payload: { room: updatedRoom }
-                });
-            }
-            return newRooms;
-        });
-
-        // 3. Persist to DB if it's a DB room
+        console.log(`Join Room ${roomId}: ${user.username}`);
         const isDbRoom = typeof roomId === 'string' && roomId.length > 20 && roomId.includes('-');
+        let updatedRoomData = null;
+
         if (isDbRoom) {
             try {
-                const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
+                const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
                 if (room) {
                     const people = Array.isArray(room.people) ? room.people : [];
                     if (!people.some(p => String(p.id) === String(user.id))) {
-                        await supabase.from('rooms')
-                            .update({ 
-                                people: [user, ...people], 
-                                last_active: new Date().toISOString() 
-                            })
-                            .eq('id', roomId);
+                        const newPeople = [user, ...people];
+                        const { data: updated } = await supabase.from('rooms')
+                            .update({ people: newPeople, last_active: new Date().toISOString() })
+                            .eq('id', roomId)
+                            .select().single();
+                        updatedRoomData = updated;
+                    } else {
+                        updatedRoomData = room;
                     }
                 }
             } catch (err) {}
@@ -300,52 +240,84 @@ export const RoomsProvider = ({ children }) => {
                 overrides[roomId] = [user, ...currentPeople];
                 localStorage.setItem('room_participant_overrides', JSON.stringify(overrides));
             }
+            setRooms(prev => prev.map(r => {
+                if (r.id !== roomId) return r;
+                const people = Array.isArray(r.people) ? r.people : [];
+                if (people.some(p => String(p.id) === String(user.id))) return r;
+                updatedRoomData = { ...r, people: [user, ...people], last_active: new Date().toISOString() };
+                return updatedRoomData;
+            }));
+        }
+
+        if (updatedRoomData && globalChannel) {
+            globalChannel.send({ type: 'broadcast', event: 'room_updated', payload: { room: updatedRoomData } });
+        }
+        if (updatedRoomData) {
+            setRooms(prev => prev.map(r => r.id === roomId ? updatedRoomData : r));
         }
     }, []);
 
-    // REMOVE PARTICIPANT (on Leave)
+    // REMOVE PARTICIPANT (Accurate Leave)
     const removeParticipant = useCallback(async (roomId, userId) => {
-        setRooms(prev => prev.map(r => {
-            if (r.id !== roomId) return r;
-            return { ...r, people: (r.people || []).filter(p => String(p.id) !== String(userId)) };
-        }));
+        console.log(`Leave Room ${roomId}: ${userId}`);
+        const isDbRoom = typeof roomId === 'string' && roomId.length > 20 && roomId.includes('-');
+        let updatedRoomData = null;
 
-        try {
-            const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
-            if (room) {
-                const updated = { ...room, people: (room.people || []).filter(p => String(p.id) !== String(userId)) };
-                const { data } = await supabase.from('rooms').update({ people: updated.people }).eq('id', roomId).select().single();
-                channelRef.current?.send({ type: 'broadcast', event: 'room_updated', payload: { room: data } });
+        if (isDbRoom) {
+            try {
+                const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+                if (room) {
+                    const newPeople = (room.people || []).filter(p => String(p.id) !== String(userId));
+                    const { data: updated } = await supabase.from('rooms')
+                        .update({ people: newPeople, last_active: new Date().toISOString() })
+                        .eq('id', roomId)
+                        .select().single();
+                    updatedRoomData = updated;
+                }
+            } catch (err) {}
+        } else {
+            const overrides = JSON.parse(localStorage.getItem('room_participant_overrides') || '{}');
+            if (overrides[roomId]) {
+                overrides[roomId] = overrides[roomId].filter(p => String(p.id) !== String(userId));
+                localStorage.setItem('room_participant_overrides', JSON.stringify(overrides));
             }
-        } catch {}
+            setRooms(prev => prev.map(r => {
+                if (r.id !== roomId) return r;
+                const newPeople = (r.people || []).filter(p => String(p.id) !== String(userId));
+                updatedRoomData = { ...r, people: newPeople, last_active: new Date().toISOString() };
+                return updatedRoomData;
+            }));
+        }
+
+        if (updatedRoomData && globalChannel) {
+            globalChannel.send({ type: 'broadcast', event: 'room_updated', payload: { room: updatedRoomData } });
+        }
+        if (updatedRoomData) {
+            setRooms(prev => prev.map(r => r.id === roomId ? updatedRoomData : r));
+        }
     }, []);
 
-    // REPORT ROOM (10 reports = delete)
+    // REPORT ROOM
     const reportRoom = useCallback(async (roomId) => {
         let isDeleted = false;
         let updatedRoom = null;
-
         setRooms(prev => {
             const newRooms = prev.map(r => {
                 if (r.id !== roomId) return r;
                 const count = (r.report_count || 0) + 1;
-                if (count >= 10) {
-                    isDeleted = true;
-                    return null;
-                }
+                if (count >= 10) { isDeleted = true; return null; }
                 updatedRoom = { ...r, report_count: count };
                 return updatedRoom;
             }).filter(Boolean);
             return newRooms;
         });
-
         if (isDeleted) {
             await deleteRoom(roomId);
             alert("This room has been removed due to multiple community reports.");
         } else if (updatedRoom) {
             try {
                 await supabase.from('rooms').update({ report_count: updatedRoom.report_count }).eq('id', roomId);
-                channelRef.current?.send({ type: 'broadcast', event: 'room_updated', payload: { room: updatedRoom } });
+                globalChannel?.send({ type: 'broadcast', event: 'room_updated', payload: { room: updatedRoom } });
             } catch {}
         }
     }, [deleteRoom]);
