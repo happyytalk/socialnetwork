@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
+import { useRooms } from '../contexts/RoomsContext';
 import RoomCard from '../components/RoomCard';
 import { LayoutContext } from '../components/Layout/Layout';
-import { getRoomsApi, joinRoomByInviteApi } from '../api/roomApi';
+import { joinRoomByInviteApi } from '../api/roomApi';
 import { getMeetTokenApi } from '../api/meetApi';
 import { startCleanupInterval, stopCleanupInterval } from '../utils/guestRoomManager';
 import ShortsSection from '../components/ShortsSection';
@@ -23,11 +24,12 @@ function Home() {
     setIsPhoneOpen,
     setInitialPhoneScreen,
     handleCreateRoomClick,
-    roomsData
   } = useContext(LayoutContext);
 
-  const [rooms, setRooms] = useState(roomsData || []);
-  const [isLoading, setIsLoading] = useState(!roomsData || roomsData.length === 0);
+  // Use global RoomsContext instead of local state
+  const { rooms, refreshRooms } = useRooms();
+
+  const [isLoading, setIsLoading] = useState(rooms.length === 0);
   const [error, setError] = useState(null);
   const [highlightedAvatars, setHighlightedAvatars] = useState(new Set());
 
@@ -35,32 +37,15 @@ function Home() {
   const location = useLocation();
   const { currentUser } = useAuth();
 
+  // Trigger refresh when parent asks
   useEffect(() => {
-    if (roomsData && roomsData.length > 0) {
-      setRooms([...roomsData]);
-    }
-  }, [roomsData]);
+    refreshRooms();
+  }, [refreshTrigger, refreshRooms]);
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const fetchedRooms = await getRoomsApi();
-      let allRooms = [];
-
-      if (fetchedRooms && fetchedRooms.length > 0) {
-        allRooms = [...fetchedRooms];
-      } else {
-        allRooms = [...(roomsData || [])];
-      }
-      setRooms(allRooms);
-    } catch (err) {
-      console.error("Error fetching data for Home:", err);
-      setRooms([...(roomsData || [])]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Set loading to false once rooms arrive
+  useEffect(() => {
+    if (rooms.length > 0) setIsLoading(false);
+  }, [rooms]);
 
   useEffect(() => {
     if (rooms.length > 0) {
@@ -71,74 +56,29 @@ function Home() {
     }
   }, [rooms]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData, refreshTrigger]);
-
+  // Guest room cleanup
   useEffect(() => {
     const cleanupIntervalId = startCleanupInterval();
-    const refreshIntervalId = setInterval(() => {
-      // Only refresh if document is visible and NOT in shorts view
-      if (document.visibilityState === 'visible' && activeHomeView !== 'shorts') {
-        fetchData();
-      }
-    }, 60 * 1000);
-    return () => {
-      stopCleanupInterval(cleanupIntervalId);
-      clearInterval(refreshIntervalId);
-    };
-  }, [fetchData, activeHomeView]);
+    return () => stopCleanupInterval(cleanupIntervalId);
+  }, []);
 
   const socket = useSocket();
 
+  // Socket events (complementary to Supabase broadcast)
   useEffect(() => {
     if (!socket) return;
-
-    const handleRoomCreated = (newRoom) => {
-      setRooms((prevRooms) => {
-        if (prevRooms.some(r => r.id === newRoom.id)) return prevRooms;
-        return [newRoom, ...prevRooms];
-      });
-    };
-
-    const handleUserJoined = ({ roomName, user }) => {
-      setRooms(prevRooms => prevRooms.map(room => {
-        if (room.jitsi_room_name === roomName) {
-          const people = room.people || [];
-          const userId = user.id || user.userId;
-          if (people.some(p => (p.id || p.userId) === userId)) return room;
-          return { ...room, people: [user, ...people] };
-        }
-        return room;
-      }));
-    };
-
-    const handleUserLeft = ({ roomName, userId }) => {
-      setRooms(prevRooms => prevRooms.map(room => {
-        if (room.jitsi_room_name === roomName) {
-          const people = room.people || [];
-          return { ...room, people: people.filter(p => (p.id || p.userId) !== userId) };
-        }
-        return room;
-      }));
-    };
-
-    const handleRoomDeleted = ({ roomId }) => {
-      setRooms((prevRooms) => prevRooms.filter(r => r.id !== roomId));
-    };
-
-    socket.on('room_created', handleRoomCreated);
-    socket.on('room_deleted', handleRoomDeleted);
-    socket.on('user_joined_room', handleUserJoined);
-    socket.on('user_left_room', handleUserLeft);
-
+    socket.on('room_created', () => refreshRooms());
+    socket.on('room_deleted', () => refreshRooms());
+    socket.on('user_joined_room', () => refreshRooms());
+    socket.on('user_left_room', () => refreshRooms());
     return () => {
-      socket.off('room_created', handleRoomCreated);
-      socket.off('room_deleted', handleRoomDeleted);
-      socket.off('user_joined_room', handleUserJoined);
-      socket.off('user_left_room', handleUserLeft);
+      socket.off('room_created');
+      socket.off('room_deleted');
+      socket.off('user_joined_room');
+      socket.off('user_left_room');
     };
-  }, [socket, fetchData]);
+  }, [socket, refreshRooms]);
+
 
   // Handle auto-join from shared links or invites (Merged from Main UI)
   useEffect(() => {

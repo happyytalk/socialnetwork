@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { deleteRoomApi, toggleRoomPrivacyApi } from '../../api/roomApi';
+import { toggleRoomPrivacyApi } from '../../api/roomApi';
 import { getMeetTokenApi } from '../../api/meetApi';
-import { supabase } from '../../supabase/config';
 import { useSocket } from '../../contexts/SocketContext';
+import { useRooms } from '../../contexts/RoomsContext';
 
 export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
     const socket = useSocket();
+    const { addParticipant, removeParticipant, deleteRoom: contextDeleteRoom } = useRooms();
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showLoginModal, setShowLoginModal] = useState(false);
@@ -97,29 +98,36 @@ export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
             const avatarUrl = user.user_metadata?.avatar_url || user.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${username}`;
             meetUrl += `&userInfo.avatarURL="${encodeURIComponent(avatarUrl)}"`;
             
-            // Persist the joining guest to the local storage so they show up on the room card
-            const { addParticipantToRoomApi } = await import('../../api/roomApi');
-            
             const userData = {
                 id: user.id || `guest-${Math.random().toString(36).substr(2, 9)}`,
                 name: user.user_metadata?.username || user.username || 'Guest',
                 username: user.user_metadata?.username || user.username || 'Guest',
                 avatar_url: user.user_metadata?.avatar_url || user.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${user.user_metadata?.username || user.username || 'Guest'}`
             };
-            await addParticipantToRoomApi(id, userData);
+            
+            // Add to room via context (broadcasts to all browsers)
+            await addParticipant(id, userData);
             if (onTopicUpdated) onTopicUpdated();
 
+            // Remove participant when user closes the meeting window
+            const cleanup = async () => {
+                await removeParticipant(id, userData.id);
+                if (onTopicUpdated) onTopicUpdated();
+                if (socket) socket.emit('leave_room', { roomName, userId: userData.id });
+            };
+
+            // Monitor the popup window for closure
+            const checkWindow = setInterval(() => {
+                if (roomWindow.closed) {
+                    clearInterval(checkWindow);
+                    cleanup();
+                }
+            }, 2000);
+
+            window.addEventListener('beforeunload', cleanup);
             roomWindow.location.href = meetUrl;
 
-            // Notify socket server so we appear in the room card immediately
             if (socket && user) {
-                const userData = {
-                    id: user.id,
-                    username: user.user_metadata?.username || user.username || user.email?.split('@')[0] || 'Guest',
-                    avatar_url: user.user_metadata?.avatar_url || user.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${user.user_metadata?.username || user.username || 'Guest'}`,
-                    premium: user.user_metadata?.premium || false,
-                    premiumConfig: user.user_metadata?.premiumConfig || null
-                };
                 socket.emit('join_room', { roomName, user: userData });
             }
         } catch (error) {
@@ -166,9 +174,9 @@ export const useRoomActions = ({ room, currentUser, onTopicUpdated }) => {
             if (is_guest_room || String(id).startsWith('guest-')) {
                 const { deleteGuestRoom } = await import('../../utils/guestRoomManager');
                 deleteGuestRoom(id);
-            } else {
-                await deleteRoomApi(id);
             }
+            // Use context deleteRoom — broadcasts to all browsers
+            await contextDeleteRoom(id);
             if (onTopicUpdated) onTopicUpdated();
             setShowDeleteConfirm(false);
         } catch (error) {

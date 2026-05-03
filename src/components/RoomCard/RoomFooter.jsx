@@ -20,13 +20,17 @@ const RoomFooter = ({
     const fallbackHost = participants && participants.length > 0 ? participants[0] : null;
     const host = creator || fallbackHost;
 
-    const hostDisplayName = (
-        !creator || 
-        host?.username?.startsWith('user_') || 
-        host?.username === 'system' || 
-        host?.id === 'system' ||
-        String(id).length < 5
-    ) ? getRandomNameByLanguage(language || 'English', id) : (host?.username || host?.name || 'Host');
+    // Show real username if available, otherwise random name only for mock rooms
+    const isSystemRoom = String(id).startsWith('room-gen') || created_by === 'system';
+    const isMockLikeId = String(id).length < 5;
+    
+    const hostDisplayName = host?.username && 
+        !host.username.startsWith('user_') && 
+        host.username !== 'system'
+        ? host.username
+        : isSystemRoom || isMockLikeId
+            ? getRandomNameByLanguage(language || 'English', id)
+            : (host?.name || host?.username || 'Host');
 
     return (
         <div className="flex justify-between items-center w-full mt-auto" style={{ padding: '4px 2px' }}>

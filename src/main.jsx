@@ -4,6 +4,7 @@ import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { RoomsProvider } from './contexts/RoomsContext';
 import ErrorBoundary from './ErrorBoundary';
 import './index.css';
 
@@ -30,7 +31,9 @@ if (rootElement) {
         <AuthProvider>
           <SocketProvider>
             <ThemeProvider>
-              <App />
+              <RoomsProvider>
+                <App />
+              </RoomsProvider>
             </ThemeProvider>
           </SocketProvider>
         </AuthProvider>

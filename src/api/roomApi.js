@@ -1,187 +1,218 @@
-// Frontend-only Room API using localStorage
+import { supabase } from '../supabase/config';
 import { mockRooms } from '../data/mockRooms';
+import { getGuestRooms } from '../utils/guestRoomManager';
 
-const USER_ROOMS_KEY = 'happytalk_user_created_rooms';
-// Bump this version string any time mockRooms.js is regenerated to bust the cache
-const DATA_VERSION = 'v14-99-unique-rooms-2026-05-02';
-const VERSION_KEY = 'happytalk_rooms_version';
-
-// On version change, wipe ALL old caches
-const bustCache = () => {
-    const storedVersion = localStorage.getItem(VERSION_KEY);
-    if (storedVersion !== DATA_VERSION) {
-        // Clear all old room caches
-        localStorage.removeItem('happytalk_local_rooms');
-        localStorage.removeItem('happytalk_rooms');
-        localStorage.removeItem(USER_ROOMS_KEY);
-        localStorage.setItem(VERSION_KEY, DATA_VERSION);
-    }
-};
-
-// Get only user-created rooms (rooms added via the UI, not mockRooms)
-const getUserCreatedRooms = () => {
-    try {
-        const rooms = localStorage.getItem(USER_ROOMS_KEY);
-        if (!rooms) return [];
-        return JSON.parse(rooms);
-    } catch (e) {
-        return [];
-    }
-};
-
-const saveUserCreatedRooms = (rooms) => {
-    localStorage.setItem(USER_ROOMS_KEY, JSON.stringify(rooms));
-};
-
+// Merge all room sources: Supabase, Guest Rooms (local), Local User Rooms, and Mocks
 export const getRoomsApi = async () => {
-    bustCache();
-    // Always use mockRooms as the base, then prepend any user-created rooms
-    const userRooms = getUserCreatedRooms();
-    return [...userRooms, ...mockRooms];
-};
+    let supabaseRooms = [];
+    try {
+        const { data, error } = await supabase
+            .from('rooms')
+            .select('*')
+            .order('created_at', { ascending: false });
+        
+        if (!error && data) {
+            supabaseRooms = data;
+        }
+    } catch (err) {
+        console.warn('Supabase rooms fetch failed, using local sources only');
+    }
 
+    const guestRooms = getGuestRooms();
+    const localUserRooms = JSON.parse(localStorage.getItem('happytalk_local_rooms') || '[]');
+    
+    // Combine all, removing duplicates by ID
+    const allRooms = [...supabaseRooms, ...guestRooms, ...localUserRooms, ...mockRooms];
+    const uniqueRooms = [];
+    const seenIds = new Set();
+
+    for (const room of allRooms) {
+        const id = room.id || room.jitsi_room_name;
+        if (!seenIds.has(id)) {
+            seenIds.add(id);
+            uniqueRooms.push(room);
+        }
+    }
+
+    return uniqueRooms;
+};
 
 export const createRoomApi = async (roomData) => {
-    const userRooms = getUserCreatedRooms();
     const slug = roomData.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const newRoom = {
-        ...roomData,
-        id: `room-${Date.now()}`,
-        created_at: new Date().toISOString(),
-        jitsi_room_name: slug,
-        mirotalk_room_name: slug,
-        is_active: true,
-        people: roomData.people || []
-    };
-    userRooms.unshift(newRoom);
-    saveUserCreatedRooms(userRooms);
-    return newRoom;
-};
+    
+    // Ensure we have a valid profile with a username
+    const creatorName = roomData.profile?.username || roomData.profile?.name || 'HappyTalk Learner';
+    const creatorAvatar = roomData.profile?.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${creatorName}`;
 
-export const setRoomTopicApi = async (roomId, topicData) => {
-    const userRooms = getUserCreatedRooms();
-    const idx = userRooms.findIndex(r => r.id === roomId);
-    if (idx !== -1) {
-        userRooms[idx].topic = topicData.topic;
-        saveUserCreatedRooms(userRooms);
-        return { message: 'Topic updated', room: userRooms[idx] };
+    const newRoom = {
+        title: roomData.title,
+        topic: roomData.topic || roomData.language,
+        language: roomData.language,
+        level: roomData.level,
+        created_by: roomData.created_by,
+        jitsi_room_name: slug,
+        is_private: roomData.is_private || false,
+        people: roomData.people || [],
+        last_active: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        profile: {
+            username: creatorName,
+            avatar_url: creatorAvatar
+        }
+    };
+
+    let createdRoom = null;
+
+    // Try Supabase first
+    try {
+        const { data, error } = await supabase
+            .from('rooms')
+            .insert([newRoom])
+            .select()
+            .single();
+        
+        if (!error && data) {
+            console.log('Room created in Supabase:', data.id);
+            createdRoom = data;
+        } else {
+            if (error) console.warn('Supabase insert failed, using fallback:', error.message);
+        }
+    } catch (err) {
+        console.error('Supabase error during creation:', err);
     }
-    // mockRooms are read-only, just acknowledge
-    return { message: 'Topic updated (mock)' };
+
+    if (!createdRoom) {
+        // Fallback to local storage
+        console.log('Falling back to local storage for room creation');
+        const localRooms = JSON.parse(localStorage.getItem('happytalk_local_rooms') || '[]');
+        createdRoom = { ...newRoom, id: `local-${Date.now()}` };
+        localRooms.unshift(createdRoom);
+        localStorage.setItem('happytalk_local_rooms', JSON.stringify(localRooms));
+    }
+
+    // BROADCAST the creation to all other tabs/browsers via Supabase Channel
+    // This works even if Realtime is disabled on the table itself
+    try {
+        const channel = supabase.channel('room_updates');
+        channel.subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+                await channel.send({
+                    type: 'broadcast',
+                    event: 'room_created',
+                    payload: { room: createdRoom },
+                });
+                console.log('Broadcasted room creation event');
+            }
+        });
+    } catch (err) {
+        console.warn('Failed to broadcast room creation');
+    }
+
+    return createdRoom;
 };
 
 export const deleteRoomApi = async (roomId) => {
-    // Check user-created rooms
-    const userRooms = getUserCreatedRooms();
-    const filtered = userRooms.filter(r => r.id !== roomId);
-    if (filtered.length !== userRooms.length) {
-        saveUserCreatedRooms(filtered);
-        return { message: "Room deleted successfully" };
-    }
+    try {
+        await supabase.from('rooms').delete().eq('id', roomId);
+    } catch (err) {}
 
-    // Check guest rooms
-    const guestRoomsStr = localStorage.getItem('happytalk_guest_rooms');
-    if (guestRoomsStr) {
-        const guestRooms = JSON.parse(guestRoomsStr);
-        const filteredGuest = guestRooms.filter(r => r.id !== roomId);
-        if (filteredGuest.length !== guestRooms.length) {
-            localStorage.setItem('happytalk_guest_rooms', JSON.stringify(filteredGuest));
-            return { message: "Room deleted successfully" };
-        }
-    }
-
-    return { message: "Room not found" };
-};
-
-export const joinRoomByInviteApi = async (token) => {
-    const allRooms = [...getUserCreatedRooms(), ...mockRooms];
-    const room = allRooms.find(r => r.invite_token === token);
-    if (room) return { room };
-    throw new Error('Invalid invite token');
-};
-
-export const regenerateInviteTokenApi = async (roomId) => {
-    const userRooms = getUserCreatedRooms();
-    const idx = userRooms.findIndex(r => r.id === roomId);
-    if (idx !== -1) {
-        const newToken = Math.random().toString(36).substr(2, 9);
-        userRooms[idx].invite_token = newToken;
-        saveUserCreatedRooms(userRooms);
-        return { message: 'Invite link regenerated.', invite_token: newToken };
-    }
-    throw new Error('Room not found');
-};
-
-export const disableInviteTokenApi = async (roomId) => {
-    const userRooms = getUserCreatedRooms();
-    const idx = userRooms.findIndex(r => r.id === roomId);
-    if (idx !== -1) {
-        userRooms[idx].invite_token = null;
-        saveUserCreatedRooms(userRooms);
-        return { message: 'Invite link disabled.' };
-    }
-    throw new Error('Room not found');
-};
-
-export const toggleRoomPrivacyApi = async (roomId) => {
-    // Check user-created rooms
-    const userRooms = getUserCreatedRooms();
-    const idx = userRooms.findIndex(r => r.id === roomId);
-    if (idx !== -1) {
-        userRooms[idx].is_private = !userRooms[idx].is_private;
-        if (userRooms[idx].is_private && !userRooms[idx].invite_token) {
-            userRooms[idx].invite_token = Math.random().toString(36).substr(2, 9);
-        }
-        saveUserCreatedRooms(userRooms);
-        return { message: 'Privacy toggled', room: userRooms[idx] };
-    }
-
-    // Check guest rooms
-    const guestRoomsStr = localStorage.getItem('happytalk_guest_rooms');
-    if (guestRoomsStr) {
-        const guestRooms = JSON.parse(guestRoomsStr);
-        const guestIdx = guestRooms.findIndex(r => r.id === roomId);
-        if (guestIdx !== -1) {
-            guestRooms[guestIdx].is_private = !guestRooms[guestIdx].is_private;
-            if (guestRooms[guestIdx].is_private && !guestRooms[guestIdx].invite_token) {
-                guestRooms[guestIdx].invite_token = Math.random().toString(36).substr(2, 9);
-            }
-            localStorage.setItem('happytalk_guest_rooms', JSON.stringify(guestRooms));
-            return { message: 'Privacy toggled', room: guestRooms[guestIdx] };
-        }
-    }
-
-    throw new Error('Room not found');
+    const localRooms = JSON.parse(localStorage.getItem('happytalk_local_rooms') || '[]');
+    const filtered = localRooms.filter(r => r.id !== roomId);
+    localStorage.setItem('happytalk_local_rooms', JSON.stringify(filtered));
+    
+    return { message: "Room deleted" };
 };
 
 export const addParticipantToRoomApi = async (roomId, user) => {
-    // Check user-created rooms
-    const userRooms = getUserCreatedRooms();
-    const idx = userRooms.findIndex(r => r.id === roomId);
-    if (idx !== -1) {
-        if (!userRooms[idx].people) userRooms[idx].people = [];
-        if (!userRooms[idx].people.some(p => String(p.id) === String(user.id))) {
-            userRooms[idx].people.unshift(user);
-            saveUserCreatedRooms(userRooms);
-        }
-        return userRooms[idx];
-    }
+    if (!roomId || !user) return null;
 
-    // Check guest rooms
-    const guestRoomsStr = localStorage.getItem('happytalk_guest_rooms');
-    if (guestRoomsStr) {
-        const guestRooms = JSON.parse(guestRoomsStr);
-        const guestIdx = guestRooms.findIndex(r => r.id === roomId);
-        if (guestIdx !== -1) {
-            if (!guestRooms[guestIdx].people) guestRooms[guestIdx].people = [];
-            if (!guestRooms[guestIdx].people.some(p => String(p.id) === String(user.id))) {
-                guestRooms[guestIdx].people.unshift(user);
-                localStorage.setItem('happytalk_guest_rooms', JSON.stringify(guestRooms));
+    try {
+        const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
+        if (room) {
+            const people = room.people || [];
+            if (!people.some(p => String(p.id) === String(user.id))) {
+                const { data } = await supabase
+                    .from('rooms')
+                    .update({ 
+                        people: [user, ...people],
+                        last_active: new Date().toISOString() 
+                    })
+                    .eq('id', roomId)
+                    .select()
+                    .single();
+                
+                // Broadcast update
+                supabase.channel('room_updates').send({
+                    type: 'broadcast',
+                    event: 'room_updated',
+                    payload: { room: data },
+                });
+
+                return data;
             }
-            return guestRooms[guestIdx];
+            return room;
         }
+    } catch (err) {}
+
+    const localRooms = JSON.parse(localStorage.getItem('happytalk_local_rooms') || '[]');
+    const idx = localRooms.findIndex(r => r.id === roomId);
+    if (idx !== -1) {
+        if (!localRooms[idx].people) localRooms[idx].people = [];
+        if (!localRooms[idx].people.some(p => String(p.id) === String(user.id))) {
+            localRooms[idx].people.unshift(user);
+            localStorage.setItem('happytalk_local_rooms', JSON.stringify(localRooms));
+        }
+        return localRooms[idx];
     }
 
     return null;
 };
 
+export const removeParticipantFromRoomApi = async (roomId, userId) => {
+    try {
+        const { data: room } = await supabase.from('rooms').select('people').eq('id', roomId).single();
+        if (room) {
+            const people = room.people || [];
+            const { data } = await supabase
+                .from('rooms')
+                .update({ people: people.filter(p => String(p.id) !== String(userId)) })
+                .eq('id', roomId)
+                .select()
+                .single();
+
+            // Broadcast update
+            supabase.channel('room_updates').send({
+                type: 'broadcast',
+                event: 'room_updated',
+                payload: { room: data },
+            });
+
+            return data;
+        }
+    } catch (err) {}
+
+    const localRooms = JSON.parse(localStorage.getItem('happytalk_local_rooms') || '[]');
+    const idx = localRooms.findIndex(r => r.id === roomId);
+    if (idx !== -1) {
+        localRooms[idx].people = (localRooms[idx].people || []).filter(p => String(p.id) !== String(userId));
+        localStorage.setItem('happytalk_local_rooms', JSON.stringify(localRooms));
+        return localRooms[idx];
+    }
+    return null;
+};
+
+export const toggleRoomPrivacyApi = async (roomId) => {
+    try {
+        const { data: room } = await supabase.from('rooms').select('is_private').eq('id', roomId).single();
+        if (room) {
+            const { data } = await supabase.from('rooms').update({ is_private: !room.is_private }).eq('id', roomId).select().single();
+            return data;
+        }
+    } catch (err) {}
+    return null;
+};
+
+export const joinRoomByInviteApi = async (token) => {
+    const { data } = await supabase.from('rooms').select('*').eq('invite_token', token).single();
+    return { room: data };
+};
