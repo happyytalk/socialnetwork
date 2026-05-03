@@ -149,6 +149,12 @@ export const RoomsProvider = ({ children }) => {
                || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`)
             : `https://api.dicebear.com/7.x/initials/svg?seed=Guest`;
 
+        const creatorProfile = {
+            id: currentUser?.id || `guest-${Date.now()}`,
+            username: username,
+            avatar_url: avatar
+        };
+
         const newRoom = {
             title: roomData.title,
             topic: roomData.topic || roomData.language,
@@ -157,15 +163,11 @@ export const RoomsProvider = ({ children }) => {
             created_by: currentUser?.id || 'guest',
             jitsi_room_name: slug,
             is_private: roomData.is_private || false,
-            people: [], 
+            people: [creatorProfile], // ← AUTO-JOIN: creator is added to participants
             last_active: new Date().toISOString(),
             created_at: new Date().toISOString(),
             // Store creator info for "Created by" display
-            profile: {
-                id: currentUser?.id || 'guest',
-                username: username,
-                avatar_url: avatar
-            }
+            profile: creatorProfile
         };
 
         let savedRoom = { ...newRoom, id: `local-${Date.now()}` };
