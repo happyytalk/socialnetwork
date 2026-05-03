@@ -37,12 +37,10 @@ const RoomCard = ({ room, currentUser: propCurrentUser, onTopicUpdated, highligh
     // Deduplicate participants
     const rawParticipants = profiles || [];
     const seenIds = new Set();
-    const seenNames = new Set();
     let participants = rawParticipants.filter(p => {
-        const name = (p.username || p.name || p.display_name)?.toLowerCase();
-        if (seenIds.has(p.id) || seenNames.has(name)) return false;
-        if (p.id) seenIds.add(p.id);
-        if (name) seenNames.add(name);
+        const pid = p.id || p.userId || p.username;
+        if (!pid || seenIds.has(pid)) return false;
+        seenIds.add(pid);
         return true;
     });
 
